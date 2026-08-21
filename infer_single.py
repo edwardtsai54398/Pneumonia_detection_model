@@ -4,7 +4,10 @@ from pathlib import Path
 
 import torch
 from PIL import Image
-from torchvision import models, transforms
+
+from data.dataset import build_transforms
+from models.builder import build_model
+from models.inference import predict
 
 
 def load_metadata(metadata_path: Path):
@@ -12,55 +15,35 @@ def load_metadata(metadata_path: Path):
         return json.load(f)
 
 
-def build_model(model_name: str, num_classes: int, model_path: Path, device: torch.device):
-    if model_name == "resnet18":
-        model = models.resnet18(weights=None)
-    elif model_name == "resnet50":
-        model = models.resnet50(weights=None)
-    else:
-        raise ValueError(f"不支援的模型: {model_name}")
-
-    in_features = model.fc.in_features
-    model.fc = torch.nn.Linear(in_features, num_classes)
-    state_dict = torch.load(model_path, map_location=device)
-    model.load_state_dict(state_dict)
-    model.to(device)
-    model.eval()
-    return model
-
-
 def main():
     parser = argparse.ArgumentParser(description="Single image inference for pneumonia classifier")
     parser.add_argument("--image_path", type=str, required=True)
-    parser.add_argument("--model_path", type=str, default=r"C:\Users\Edward\Desktop\Classifier\outputs\best_model.pth")
-    parser.add_argument("--metadata_path", type=str, default=r"C:\Users\Edward\Desktop\Classifier\outputs\metadata.json")
+    parser.add_argument("--model_path", type=str, required=True, help="best_model.pth 路徑")
+    parser.add_argument("--metadata_path", type=str, required=True, help="metadata.json 路徑")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     metadata = load_metadata(Path(args.metadata_path))
     idx_to_class = {int(k): v for k, v in metadata["idx_to_class"].items()}
     img_size = int(metadata.get("img_size", 224))
-    model_name = metadata.get("model_name", "resnet18")
+    model_name = metadata.get("model_name")
     num_classes = len(idx_to_class)
 
-    tf = transforms.Compose(
-        [
-            transforms.Grayscale(num_output_channels=3),
-            transforms.Resize((img_size, img_size)),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-        ]
-    )
+    # pretrained=False：checkpoint 的 load_state_dict(strict=True) 會覆蓋所有參數，
+    # 推論時不需要先下載 ImageNet 預訓練權重。
+    model = build_model(num_classes, device, model_name=model_name, pretrained=False)
+    state_dict = torch.load(args.model_path, map_location=device)
+    model.load_state_dict(state_dict)
+    model.eval()
 
-    model = build_model(model_name, num_classes, Path(args.model_path), device)
+    tf = build_transforms(img_size=img_size)["val"]
 
     image = Image.open(args.image_path).convert("RGB")
     x = tf(image).unsqueeze(0).to(device)
 
-    with torch.no_grad():
-        logits = model(x)
-        probs = torch.softmax(logits, dim=1).squeeze(0)
-        pred_idx = int(torch.argmax(probs).item())
+    _, _, scores = predict(model, x, idx_to_class=idx_to_class)
+    probs = scores.squeeze(0)
+    pred_idx = int(torch.argmax(probs).item())
 
     pred_label = idx_to_class[pred_idx]
     confidence = float(probs[pred_idx].item())
@@ -72,4 +55,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
