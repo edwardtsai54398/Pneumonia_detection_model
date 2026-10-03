@@ -1,3 +1,5 @@
+import os
+import re
 from pathlib import Path
 
 import torch
@@ -6,25 +8,91 @@ from torchvision import transforms
 from torchvision.datasets import ImageFolder
 
 from constant import IMAGENET_MEAN, IMAGENET_STD
+from env import in_colab
+
+KAGGLE_DATASET_ID = "paultimothymooney/chest-xray-pneumonia"
 
 
-def download_dataset():
-    """Download the Kaggle chest-xray-pneumonia dataset via kagglehub.
+def ensure_kaggle_auth():
+    """確保 kagglehub 有 Kaggle 憑證可用，回傳憑證來源字串。
 
-    Returns the Path to the extracted `chest_xray/` directory
-    (containing train/val/test subfolders).
+    嘗試順序：
+      1. 環境變數 KAGGLE_USERNAME / KAGGLE_KEY
+      2. Colab Secrets（左側 🔑 圖示，新增同名兩個 secret 並開啟 Notebook access）
+      3. ~/.kaggle/kaggle.json
+      4. kagglehub.login() 互動式輸入
+
+    憑證取得：Kaggle → 右上頭像 → Settings → API → Create New Token，
+    下載的 kaggle.json 裡就是 username 與 key。
     """
+    if os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY"):
+        return "環境變數"
+
+    if in_colab():
+        try:
+            from google.colab import userdata
+
+            os.environ["KAGGLE_USERNAME"] = userdata.get("KAGGLE_USERNAME")
+            os.environ["KAGGLE_KEY"] = userdata.get("KAGGLE_KEY")
+            return "Colab Secrets"
+        except Exception as e:
+            print(f"未能從 Colab Secrets 取得憑證（{type(e).__name__}），改用互動式登入。")
+
+    if (Path.home() / ".kaggle" / "kaggle.json").exists():
+        return "~/.kaggle/kaggle.json"
+
     import kagglehub
 
-    dataset_root = Path(kagglehub.dataset_download("paultimothymooney/chest-xray-pneumonia"))
-    dataset_root = dataset_root / "chest_xray"
+    kagglehub.login()  # 會跳出輸入框，依序填 username 與 key
+    return "互動式登入"
 
-    for split in ["train", "val", "test"]:
-        split_dir = dataset_root / split
-        if not split_dir.exists():
-            raise FileNotFoundError(f"資料夾不存在: {split_dir}")
 
-    return dataset_root
+def find_split_root(root):
+    """在下載目錄底下找出真正含 train/val/test 的那一層。
+
+    Kaggle 上這個資料集不同版本會多包一層 chest_xray/，所以不寫死路徑。
+    """
+    root = Path(root)
+    candidates = [root, root / "chest_xray", root / "chest_xray" / "chest_xray"]
+    candidates += sorted(root.glob("*/chest_xray"))
+
+    for candidate in candidates:
+        if all((candidate / split).is_dir() for split in ("train", "val", "test")):
+            return candidate
+
+    raise FileNotFoundError(f"在 {root} 底下找不到同時含 train/val/test 的資料夾")
+
+
+def dataset_version(path):
+    """從 kagglehub 快取路徑解析版本號（.../versions/N），解析不到回傳 None。
+
+    Colab 的共用快取路徑（/kaggle/input/...）不含版本號，所以這個值可能是 None。
+    """
+    match = re.search(r"[\/]versions[\/](\d+)", str(path))
+    return int(match.group(1)) if match else None
+
+
+def download_dataset(local_dir=None):
+    """下載 chest-xray-pneumonia，回傳含 train/val/test 的資料夾路徑。
+
+    local_dir 指定且已有有效資料時，直接沿用不重新下載
+    （例如事先解壓到 Drive 的副本）。
+    """
+    if local_dir is not None:
+        try:
+            split_root = find_split_root(local_dir)
+            print(f"沿用既有資料：{split_root}")
+            return split_root
+        except FileNotFoundError:
+            print(f"{local_dir} 沒有可用資料，改從 Kaggle 下載。")
+
+    print(f"Kaggle 憑證來源：{ensure_kaggle_auth()}")
+
+    import kagglehub
+
+    cache_root = Path(kagglehub.dataset_download(KAGGLE_DATASET_ID))
+    print(f"kagglehub 快取路徑：{cache_root}")
+    return find_split_root(cache_root)
 
 
 def build_transforms(img_size=224):
