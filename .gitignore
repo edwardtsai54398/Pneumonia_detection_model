@@ -1,14 +1,12 @@
 .venv/
 __pycache__/
+.ipynb_checkpoints/
+
+# 權重 47MB 一份，放 Drive 就好。
+# metadata.json / history.json / pip_freeze.txt / 兩張圖「不」在這裡擋掉——
+# 那些就是訓練紀錄本身，要進版控。
 outputs/**/*.pth
+
 *.pyc
 *.pyo
 *.pyd
-*.pyw
-*.pyz
-*.pywz
-*.pyzw
-*.pyzwz
-*.pyzwzw
-*.pyzwzwz
-*.pyzwzwzw
