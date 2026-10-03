@@ -39,11 +39,73 @@ class EpochTimer:
         return avg
 
 
-def make_output_dir(experiment_name, base="outputs"):
+# notebook 的設定 cell 用大寫變數，collect_config() 再把它們收進 metadata.json。
+# 往設定 cell 加一個參數時，記得同步加到這裡，否則不會被記錄下來。
+CONFIG_KEYS = (
+    "EXPERIMENT_NAME",
+    "MODEL_NAME",
+    "IMAGE_SIZE",
+    "BATCH_SIZE",
+    "EPOCHS",
+    "LR",
+    "WEIGHT_DECAY",
+    "RANDOM_SEED",
+    "SPLIT_SEED",
+    "FREEZE_BACKBONE",
+    "UNFREEZE_EPOCH",
+    "BACKBONE_LR_FACTOR",
+    "PATIENCE",
+    "NUM_WORKERS",
+    "TRAIN_RATIO",
+    "VAL_RATIO",
+    "TEST_RATIO",
+)
+
+
+def collect_config(namespace, keys=CONFIG_KEYS):
+    """從 notebook 的 globals() 收集設定，回傳可寫進 metadata.json 的 dict。
+
+    放在設定 cell 的最後一行呼叫：少打或打錯一個變數名（EPOCHSS = 30）會在
+    跑那個 cell 的當下就 KeyError，而不是訓練 40 分鐘之後才發現。
+    """
+    missing = [k for k in keys if k not in namespace]
+    if missing:
+        raise KeyError(f"設定 cell 缺少這些變數: {missing}")
+    return {k.lower(): namespace[k] for k in keys}
+
+
+def make_run_id(experiment_name):
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out = Path(base) / f"{experiment_name}_{stamp}"
+    return f"{experiment_name}_{stamp}"
+
+
+def make_output_dir(experiment_name, base="outputs", run_id=None):
+    """建立並回傳這次實驗的輸出目錄。
+
+    run_id 可以先用 make_run_id() 產生再傳進來。在 Colab 需要這樣做：權重寫到
+    Drive、文字產物寫到 git clone 裡，兩邊要同一個資料夾名，而呼叫兩次
+    make_output_dir() 會產生兩個不同的時間戳。
+    """
+    out = Path(base) / (run_id or make_run_id(experiment_name))
     out.mkdir(parents=True, exist_ok=True)
     return out
+
+
+def _json_default(value):
+    """json.dump 的保險絲：numpy 純量與 Path 都轉成原生型別。
+
+    split_counts() 已經轉過 int，但設定 cell 裡隨手放一個 np.float64 就會讓
+    整個 save_results 在最後一步炸掉——那時候訓練已經跑完了。
+    """
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating,)):
+        return float(value)
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, Path):
+        return str(value)
+    return str(value)
 
 
 def save_results(
@@ -58,14 +120,26 @@ def save_results(
     history,
     model_name=DEFAULT_MODEL_NAME,
     train_time_per_epoch=0.0,
+    config=None,
+    run_info=None,
+    split_info=None,
+    weights_dir=None,
 ):
     model.load_state_dict(best_state)
 
     num_parameters = sum(p.numel() for p in model.parameters()) / 1e6  # 單位：M
 
-    torch.save(best_state, out_dir / "best_model.pth")
+    # 權重可以寫到別的地方（Colab 寫 Drive，才不會隨執行階段消失），
+    # 文字產物與圖留在 out_dir（也就是 repo 的 outputs/，要進版控）。
+    weights_dir = Path(weights_dir) if weights_dir is not None else out_dir
+    weights_dir.mkdir(parents=True, exist_ok=True)
+    torch.save(best_state, weights_dir / "best_model.pth")
 
     metadata = {
+        # ---- 既有欄位，順序與名稱都不要動 --------------------------------
+        # infer_single.py 讀 idx_to_class / img_size / model_name 這三個；
+        # 改名或移除會讓既有的 checkpoint 無法推論。新增欄位則是安全的，
+        # 因為 json.load 會忽略多出來的 key。
         "model_name": model_name,
         "num_parameters": num_parameters,
         "class_to_idx": class_to_idx,
@@ -75,11 +149,19 @@ def save_results(
         "test_metrics": {k: v for k, v in test_metrics.items() if k != "cm"},
         "train_time_per_epoch": train_time_per_epoch,
     }
+    # ---- 可重現性欄位 ----------------------------------------------------
+    if config is not None:
+        metadata["config"] = dict(config)
+    if run_info is not None:
+        metadata.update(run_info)
+    if split_info is not None:
+        metadata.update(split_info)
+
     with open(out_dir / "metadata.json", "w", encoding="utf-8") as f:
-        json.dump(metadata, f, ensure_ascii=False, indent=2)
+        json.dump(metadata, f, ensure_ascii=False, indent=2, default=_json_default)
 
     with open(out_dir / "history.json", "w", encoding="utf-8") as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
+        json.dump(history, f, ensure_ascii=False, indent=2, default=_json_default)
 
     history_fig = plot_history(history)
     history_fig.savefig(out_dir / "training_curves.png", dpi=150)
@@ -92,3 +174,5 @@ def save_results(
         plt.close(cm_fig)
 
     print(f"Results saved to {out_dir}")
+    if weights_dir != out_dir:
+        print(f"Weights saved to {weights_dir}")

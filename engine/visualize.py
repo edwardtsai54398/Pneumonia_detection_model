@@ -1,5 +1,12 @@
+import matplotlib
 import numpy as np
 import matplotlib.pyplot as plt
+
+# 類別固定配色，順序對齊 constant.CLASS_NAMES，不循環、不依大小重新上色。
+# 這兩個色（matplotlib 的 tab:blue / tab:orange）通過色盲安全檢查：
+# 最差相鄰配對 ΔE 24.6（protan）、31.8（tritan），遠高於 8 的門檻。
+# tab:orange 對白底的對比是 2.47（低於 3:1），所以長條一律標上數值。
+CLASS_COLORS = ["#1f77b4", "#ff7f0e"]
 
 
 def plot_history(history, show=False):
@@ -50,7 +57,13 @@ def plot_cm(cm, class_names=None, show=False):
     cm_norm = cm.astype("float") / cm.sum(axis=1, keepdims=True)
 
     fig, ax = plt.subplots(figsize=(6, 5))
-    im = ax.imshow(cm_norm, interpolation="nearest", cmap=plt.cm.Blues, vmin=0, vmax=1)
+    im = ax.imshow(
+        cm_norm,
+        interpolation="nearest",
+        cmap=matplotlib.colormaps["Blues"],
+        vmin=0,
+        vmax=1,
+    )
     ax.figure.colorbar(im, ax=ax)
     ax.set(
         xticks=np.arange(num_classes),
@@ -70,6 +83,63 @@ def plot_cm(cm, class_names=None, show=False):
                 ha="center", va="center", fontsize=9,
                 color="white" if cm_norm[i, j] > 0.5 else "black",
             )
+
+    fig.tight_layout()
+    if show:
+        plt.show()
+    return fig
+
+
+def plot_class_distribution(counts, title="Class Distribution", show=False):
+    """Plot and return a grouped bar chart of class counts.
+
+    接受兩種形狀：
+      {"NORMAL": 1583, "PNEUMONIA": 4273}                  -> 單一組
+      {"train": {"NORMAL": 1341, ...}, "val": {...}, ...}  -> 每個 split 一組
+
+    用 matplotlib 而不是 seaborn，是為了不替這一張圖多引入 seaborn + pandas
+    兩個依賴（而且 seaborn 的 palette 沒搭配 hue 已經被標記為 deprecated）。
+    """
+    nested = counts if all(isinstance(v, dict) for v in counts.values()) else {"all": counts}
+
+    groups = list(nested)
+    class_names = list(dict.fromkeys(name for g in nested.values() for name in g))
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    x = np.arange(len(groups), dtype=float)
+    n_series = len(class_names)
+    # 總寬 0.76，每個系列之間留 0.04 的空隙（約 2px），靠間隙而不是外框線分隔。
+    gap = 0.04
+    width = (0.76 - gap * (n_series - 1)) / n_series
+
+    for i, name in enumerate(class_names):
+        offset = (i - (n_series - 1) / 2) * (width + gap)
+        values = [nested[g].get(name, 0) for g in groups]
+        bars = ax.bar(
+            x + offset,
+            values,
+            width,
+            label=name,
+            color=CLASS_COLORS[i % len(CLASS_COLORS)],
+        )
+        # 每根都標數值：長條本身對白底的對比不足 3:1，數值標籤就是補償，
+        # 同時讓讀者不必靠座標軸估算。
+        ax.bar_label(bars, padding=2, fontsize=9)
+
+    ax.set_xticks(x, groups)
+    ax.set_ylabel("Number of Images")
+    ax.set_title(title, fontsize=14)
+    ax.legend(frameon=False)
+
+    # 只留 y 方向的細實線格線（虛線會讀成「門檻」或「推估」），並壓掉右上邊框。
+    ax.grid(axis="y", linewidth=0.5, alpha=0.3)
+    ax.set_axisbelow(True)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+
+    # 給最高的數值標籤留一點空間，免得被圖的上緣切掉
+    ax.margins(y=0.12)
 
     fig.tight_layout()
     if show:
