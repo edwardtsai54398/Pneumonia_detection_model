@@ -1,16 +1,52 @@
 # Chest X-ray 肺炎分類（EfficientNet_B3 遷移學習 / PyTorch）
 
-此專案使用 Kaggle 的 Chest X-Ray Pneumonia 資料集，透過 EfficientNet_B3 進行遷移學習，完成二元分類：
+以 Kaggle 的 Chest X-Ray Pneumonia 資料集（5856 張胸腔 X 光）對 `efficientnet_b3` 做遷移學習，
+執行 `NORMAL` / `PNEUMONIA` 二元分類。每次訓練輸出一組權重、訓練紀錄與圖表到 `outputs/<run_id>/`，
+並可用 `infer_single.py` 對單張影像推論。
 
-- `NORMAL`: 正常胸腔 X 光
-- `PNEUMONIA`: 肺炎胸腔 X 光
+資料集：<https://www.kaggle.com/datasets/paultimothymooney/chest-xray-pneumonia/data>
 
-資料集連結：
-`https://www.kaggle.com/datasets/paultimothymooney/chest-xray-pneumonia/data`
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/edwardtsai54398/Pneumonia_detection_model/blob/master/notebooks/efficient_train_colab.ipynb)
 
-## 1) 安裝套件
+## 結果
 
-在專案根目錄下執行：
+目前 repo 裡還沒有已提交的 `outputs/`，因此沒有可引用的實測數字。
+
+| 指標 | Test |
+| --- | --- |
+| accuracy | TODO |
+| precision | TODO |
+| recall | TODO |
+| f1 | TODO |
+
+切分方式：`split_scheme = regrouped_70_15_15`、`split_seed = 42`。
+跑完一次訓練後，數字請從 `outputs/<run_id>/metadata.json` 的 `test_metrics` 填入。
+
+## Quick start
+
+兩條路徑選一條。Colab 有免費 GPU，是主要路徑。
+
+### A. Colab（推薦）
+
+1. 點上方 **Open In Colab** badge。
+2. 切換到 **執行階段 → 變更執行階段類型 → GPU**。
+3. 準備 Kaggle 憑證：Kaggle → 右上頭像 → **Settings → API → Create New Token**，
+   下載 `kaggle.json`。在 Colab 左側點 **Secrets**，新增兩筆並都開啟 **Notebook access**：
+
+   | Name | Value |
+   | --- | --- |
+   | `KAGGLE_USERNAME` | `kaggle.json` 的 `username` |
+   | `KAGGLE_KEY` | `kaggle.json` 的 `key` |
+
+4. 由 Cell 1 開始依序執行到 Cell 11。Cell 2 會要求授權掛載 Google Drive——
+   權重寫到 Drive 才能在執行階段結束後保留下來，`outputs/` 的文字產物仍寫在 clone 出來的 repo 裡。
+5. 要把這次的訓練紀錄推回 GitHub，再執行 Cell 12（需要另一個 secret `GH_TOKEN`，
+   見下方「改程式碼的流程」）。
+
+### B. 本機
+
+需要 Python 3.10 以上。有 CUDA GPU 會快得多，純 CPU 也能執行。
+在專案根目錄執行（PowerShell）：
 
 ```powershell
 python -m venv .venv
@@ -18,31 +54,43 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-## 2) 模組說明
+Kaggle 憑證放在 `~/.kaggle/kaggle.json`，或設定 `KAGGLE_USERNAME` / `KAGGLE_KEY` 環境變數。
+接著開啟 `notebooks/efficient_train.ipynb`，由 Cell 1 依序執行到 Cell 10。
 
-所有程式碼都在這些 `.py` 裡，**notebook 只負責把它們串起來**。不要把函式定義貼進
-notebook——那會變成第二份複本，然後兩邊就會各自演化。
+## 專案結構
 
-- `constant.py`：共用常數（ImageNet mean/std、模型名稱對照表、類別名稱、預設切分種子）。
-- `env.py`：Colab 偵測、以及記錄「這次是在什麼環境、哪一版程式碼跑的」（`collect_run_info()`）。
-- `config` 沒有獨立檔案：超參數寫在 notebook 的設定 cell，由 `utils.collect_config()` 收進 `metadata.json`。
-- `data/dataset.py`：Kaggle 憑證處理與下載、影像 transform、`ImageFolder` 建構、`DataLoader` 建構。
-- `data/split.py`：70/15/15 重新切分（索引式，只產生名單不建資料夾）、切分指紋。
-- `engine/trainer.py`：單一 epoch 訓練/驗證迴圈、完整訓練迴圈（含 backbone 解凍排程、early stopping）、指標計算。
-- `engine/visualize.py`：訓練曲線、混淆矩陣、類別分佈繪圖。
-- `models/builder.py`：模型建構（`resnet18`/`resnet50`/`efficientnet_b3`，可切換 backbone 凍結）。
-- `models/inference.py`：批次推論（softmax + argmax）。
-- `utils.py`：亂數種子、計時器、設定快照、輸出目錄與結果的儲存。
-- `notebooks/`：`efficient_train.ipynb`（本機）與 `efficient_train_colab.ipynb`（Colab）。
+```text
+.
+├── constant.py                      # 共用常數：ImageNet mean/std、模型對照表、CLASS_NAMES、DEFAULT_SPLIT_SEED
+├── env.py                           # Colab 偵測、collect_run_info()（git commit 與環境版本快照）
+├── utils.py                         # set_seed、EpochTimer、collect_config、make_run_id/make_output_dir、save_results
+├── infer_single.py                  # 單張影像推論的 CLI
+├── requirements.txt                 # 套件版本下限
+├── data/
+│   ├── dataset.py                   # Kaggle 憑證與下載、transform、ImageFolder、DataLoader
+│   └── split.py                     # 索引式 70/15/15 重新切分、split_fingerprint、SampleListDataset
+├── engine/
+│   ├── trainer.py                   # 單一 epoch 迴圈、train_model（backbone 解凍、early stopping）、指標計算
+│   └── visualize.py                 # plot_history、plot_cm、plot_class_distribution
+├── models/
+│   ├── builder.py                   # build_model（efficientnet_b3 / resnet18 / resnet50，可凍結 backbone）
+│   └── inference.py                 # predict（softmax + argmax 批次推論）
+├── notebooks/
+│   ├── efficient_train.ipynb        # 本機訓練（10 個 code cell）
+│   └── efficient_train_colab.ipynb  # Colab 訓練（13 個 code cell，多了 clone / Drive / push）
+└── outputs/<run_id>/                # 每次訓練的產物（執行過才會出現）
+```
 
-> ⚠️ `constant.CLASS_NAMES` 必須維持字母排序。`ImageFolder` 是按字母排序類別目錄
-> 決定索引（`NORMAL=0, PNEUMONIA=1`），而 `data/split.py` 從 `CLASS_NAMES` 推導同一份
-> 對應。兩者不一致時，舊的 `best_model.pth` 配新的 `metadata.json` 會**安靜地反向
-> 預測**——不丟例外，信心值看起來還很合理。
+所有訓練邏輯都在根目錄的 `.py` 模組裡，notebook 只負責設定參數與依序呼叫。
+要改行為請改 `.py`，不要把函式貼回 notebook cell。
 
-## 3) 下載與放置資料集
+## 資料集
 
-資料集透過 notebook 內的 `download_dataset()` 以 `kagglehub` 自動下載，也可以手動放置成以下結構（重點是 `train/`, `val/`, `test/`）：
+`data/dataset.py` 的 `download_dataset()` 透過 `kagglehub` 下載
+`paultimothymooney/chest-xray-pneumonia`，再由 `find_split_root()` 自動找出真正含
+`train/val/test` 的那一層（資料集不同版本會多包一層 `chest_xray/`）。
+
+已經有本機副本的話，把設定 cell 的 `DATASET_LOCAL_DIR` 指向下列結構的最上層目錄，就會直接沿用：
 
 ```text
 chest_xray/
@@ -57,126 +105,169 @@ chest_xray/
     └── PNEUMONIA
 ```
 
-**注意官方切分不直接拿來用**：原始的 `val/` 只有 16 張（NORMAL 8、PNEUMONIA 8），
-用它做 early stopping 和選模型基本上是在選噪音。所以 notebook 會把全部 5856 張
-重新切成 70/15/15（每個類別各自切，維持類別比例），val 因此變成約 877 張。
+### 兩種切分方式
 
-## 4) 開始訓練
-
-兩本 notebook，流程一致：
-
-- `notebooks/efficient_train_colab.ipynb` — Colab（主力）
-- `notebooks/efficient_train.ipynb` — 本機
-
-本專案以 notebook 訓練，無 CLI 訓練腳本。Cell 順序：
-
-| Cell | 做什麼 |
+| 切分 | 內容 |
 | --- | --- |
-| 1 | （Colab）clone repo、裝套件 ／（本機）匯入模組 |
-| 2 | 匯入模組、偵測裝置、掛載 Drive |
-| 3 | **實驗設定（換參數只改這個 cell）** |
-| 4 | 下載資料與清點 |
-| 5 | 原始切分的類別分佈 |
-| 6 | 重新切分 70/15/15 |
-| 7 | 準備資料集與模型 |
-| 8 | 訓練 |
-| 9 | 測試集評估 |
-| 10 | 訓練曲線與混淆矩陣 |
-| 11 | 儲存結果 |
-| 12–13 | （Colab）把紀錄 push 回 GitHub、同步最新程式碼 |
+| 原始 Kaggle 切分 | 資料集附帶的 `train/val/test`。`val` 只有 16 張，用它做 early stopping 與選模型等於在選噪音。notebook 只以 `count_images()` 清點並繪圖，不拿它訓練 |
+| `regrouped_70_15_15` | `collect_all_images()` 收齊全部 5856 張，再由 `plan_splits()` 按類別分層切成 70/15/15。這是實際訓練用的切分，也是寫進 `metadata.json` 的 `split_scheme` 值 |
 
-（本機版沒有 Colab 專屬的 1 / 12 / 13，所以編號各往前一格。）
+不同 `split_scheme` 的數字不要直接比較，測試集的組成不同。
 
-### 設定 cell 的兩個種子
+## 訓練
 
-```python
-RANDOM_SEED = 43     # 只影響權重初始化 / augmentation / batch 順序
-SPLIT_SEED  = 42     # 只影響資料切分
-```
+改參數只改設定 cell：Colab 版是 Cell 3，本機版是 Cell 2。
 
-**不要混用。** 想比較不同 `RANDOM_SEED` 的穩定性時，`SPLIT_SEED` 必須固定——否則
-換 seed 會連 train/val/test 怎麼切都一起換掉。實測 `seed=43` 的 NORMAL 測試集有
-172/238 張是 `seed=42` 的訓練資料，那樣兩次實驗根本不能比。
+| 參數 | 說明 |
+| --- | --- |
+| `EXPERIMENT_NAME` | 實驗名稱，會成為 `run_id` 的前綴 |
+| `MODEL_NAME` | `efficientnet_b3` / `resnet18` / `resnet50`，取自 `constant.MODELS` |
+| `IMAGE_SIZE` | 輸入解析度，預設 224 |
+| `BATCH_SIZE` / `EPOCHS` / `LR` / `WEIGHT_DECAY` | 批次大小、最大 epoch 數、學習率、weight decay |
+| `RANDOM_SEED` | 只影響權重初始化、augmentation 與 batch 順序 |
+| `SPLIT_SEED` | 只影響 train/val/test 怎麼切。比較不同 `RANDOM_SEED` 時必須固定 |
+| `TRAIN_RATIO` / `VAL_RATIO` / `TEST_RATIO` | 切分比例，三者必須加總為 1 |
+| `FREEZE_BACKBONE` | 前幾個 epoch 是否只訓練分類頭 |
+| `UNFREEZE_EPOCH` | 在第幾個 epoch 解凍 backbone |
+| `BACKBONE_LR_FACTOR` | 解凍後 backbone 的學習率 = `LR * BACKBONE_LR_FACTOR` |
+| `PATIENCE` | early stopping 的耐心值，監看驗證集 F1 |
+| `NUM_WORKERS` | DataLoader 工作進程數。Windows 上建議設為 `0` |
+| `DATASET_LOCAL_DIR` | 指向本機既有資料集，`None` 表示從 Kaggle 下載 |
 
-設定 cell 最後的 `CONFIG = collect_config(globals())` 會把所有參數收進
-`metadata.json`。打錯變數名（`EPOCHSS = 30`）會在跑那個 cell 當下就 `KeyError`，
-不會等到訓練完才發現。往設定 cell 加參數時，記得同步加進 `utils.CONFIG_KEYS`。
+設定 cell 最後的 `CONFIG = collect_config(globals())` 會把上述參數收進 `metadata.json`。
+變數名打錯或漏掉會在執行該 cell 時立即 `KeyError`，不會等到訓練結束才發現。
 
-### 在 Colab 改程式碼的流程
+### Cell 順序
 
-主要路徑：**在 VS Code 改 → commit → push → 回 Colab 跑最後一個同步 cell
-（`git pull --ff-only`）**。有 `%autoreload 2`，不用重啟執行階段，`model` /
-`history` / `best_state` 都還在。
-
-這條路徑不是「比較乾淨」而已——它是唯一能讓 `metadata.json` 裡那個 SHA 真的
-存在於 GitHub 的做法。
-
-> ⚠️ `%autoreload` 只換掉**函式本體**。改了 `constant.py` / `utils.py` 的常數
-> （`CLASS_NAMES`、`CONFIG_KEYS`）必須重啟執行階段。
->
-> ⚠️ **訓練進行中不要 `git pull`**。epoch 是在呼叫時才解析函式，中途換掉程式碼
-> 會讓 `git_commit` 變成謊言，而且沒有任何機制會偵測到。
-
-逃生口：訓練到一半才發現小 bug、又不想丟掉這次 run，就用 Colab 內建編輯器改檔、
-重跑那個 cell，然後從 Cell 12 commit + push，別讓修正困在 VM 裡。
-
-### 輸出
-
-每次實驗一個 `outputs/<experiment_name>_<timestamp>/`：
-
-| 檔案 | 進版控？ | 說明 |
+| Colab | 本機 | 做什麼 |
 | --- | --- | --- |
-| `metadata.json` | ✅ | 超參數、`git_commit`、環境版本、切分資訊、測試集指標 |
-| `history.json` | ✅ | 每個 epoch 的訓練/驗證指標 |
-| `pip_freeze.txt` | ✅ | 精確的套件版本（`requirements.txt` 只有 `>=` 下限）|
-| `training_curves.png`、`confusion_matrix.png` | ✅ | 視覺化圖表 |
-| `best_model.pth` | ❌ | 47MB，被 `.gitignore` 擋掉；Colab 會寫到 Drive |
+| 1 | — | clone 或 pull repo、`pip install -r requirements.txt` |
+| 2 | 1 | 匯入模組、偵測裝置、掛載 Drive（本機版沒有 Drive） |
+| 3 | 2 | **實驗設定** |
+| 4 | 3 | 下載資料與清點 |
+| 5 | 4 | 原始切分的類別分佈圖 |
+| 6 | 5 | 重新切分 70/15/15，印出 `split_fingerprint` |
+| 7 | 6 | `set_seed()`、建立 dataset / dataloader / model / optimizer / scheduler |
+| 8 | 7 | 訓練 |
+| 9 | 8 | 測試集評估 |
+| 10 | 9 | 訓練曲線與混淆矩陣 |
+| 11 | 10 | 儲存結果（Colab 版另外產生 `pip_freeze.txt`） |
+| 12 | — | 把 `outputs/` commit 並 push 回 GitHub（選配） |
+| 13 | — | `git pull --ff-only` 同步最新程式碼 |
 
-所以 GitHub 上每一次實驗 = **一個 commit SHA + 一個 outputs 資料夾**。
+### 重跑某個 cell 的注意事項
 
-## 5) 單張影像推論
+- 改了設定 cell 的參數，就從設定 cell 往後依序重跑到儲存結果那個 cell。
+- `set_seed()` 在準備模型的 cell（Colab Cell 7 / 本機 Cell 6），不在設定 cell。
+  重跑訓練前請連這個 cell 一起重跑，否則 RNG 狀態已經往前推進，權重初始化不會與上次相同。
+- 換過執行階段之後，舊的 `plan` 裡的路徑已經失效。請重跑下載與切分的 cell；
+  `build_datasets_from_plan()` 會在訓練開始前檢查所有路徑並直接報錯。
+
+## 輸出產物
+
+每次訓練建立一個 `outputs/<run_id>/`，`run_id` 的格式是 `<EXPERIMENT_NAME>_<YYYYmmdd_HHMMSS>`。
+
+| 檔案 | 進版控 | 說明 |
+| --- | --- | --- |
+| `metadata.json` | 是 | 超參數、環境與程式碼版本、切分資訊、測試集指標 |
+| `history.json` | 是 | 每個 epoch 的 train/val loss、f1、accuracy、precision、recall 與 lr |
+| `training_curves.png` | 是 | 訓練曲線，2×3 共六張子圖 |
+| `confusion_matrix.png` | 是 | 測試集的列正規化混淆矩陣 |
+| `pip_freeze.txt` | 是 | 當次環境的精確套件版本，要完整重現環境時照它安裝。僅 Colab Cell 11 產生 |
+| `best_model.pth` | 否 | 權重約 47MB，由 `.gitignore` 排除。Colab 執行時寫到 Drive 的 `Pneumonia_Project/weights/<run_id>/` |
+
+### `metadata.json` 的重要欄位
+
+| 欄位 | 說明 |
+| --- | --- |
+| `model_name` | 模型架構。`infer_single.py` 靠這個決定要建立哪一個 backbone |
+| `img_size` | 訓練時的輸入解析度，推論會沿用同一個值 |
+| `class_to_idx` / `idx_to_class` | 類別與索引的對應。`infer_single.py` 用它把預測索引轉成標籤 |
+| `best_val_f1` | 驗證集最佳 F1，也是選取 checkpoint 的依據 |
+| `test_metrics` | 測試集的 loss / accuracy / precision / recall / f1 與 tp、tn、fp、fn |
+| `num_parameters` | 模型參數量，單位為百萬 |
+| `train_time_per_epoch` | 每個 epoch 的平均秒數 |
+| `config` | 設定 cell 的完整參數快照 |
+| `git_commit` | 執行時 `HEAD` 的完整 SHA |
+| `python_version` / `torch_version` / `torchvision_version` / `cuda_version` / `gpu` / `platform` / `in_colab` | 環境快照 |
+| `deterministic` | 固定為 `false`，表示同一個 seed 重跑不保證 bit-level 一致 |
+| `split_scheme` / `split_seed` / `split_ratios` / `split_counts` | 切分方式、種子、比例與各 split 的類別分佈 |
+| `split_fingerprint` | 這次切分的指紋（sha256）。兩次實驗要能互相比較，這個值必須相同 |
+| `dataset_id` / `dataset_version` | Kaggle 資料集 ID 與版本號（共用快取路徑解析不到版本時為 `null`） |
+
+## 單張推論
+
+在專案根目錄執行（PowerShell）。三個參數都是必填：
 
 ```powershell
 python infer_single.py `
   --image_path "C:\path\to\your\xray_image.jpeg" `
-  --model_path "outputs\<experiment_name>_<timestamp>\best_model.pth" `
-  --metadata_path "outputs\<experiment_name>_<timestamp>\metadata.json"
+  --model_path "outputs\<run_id>\best_model.pth" `
+  --metadata_path "outputs\<run_id>\metadata.json"
 ```
 
-`infer_single.py` 會依 `metadata.json` 裡的 `model_name` 自動選擇正確的模型架構（`resnet18`/`resnet50`/`efficientnet_b3`）。
+權重與 `metadata.json` 必須來自同一次訓練。`model_path` 指向從 Drive 下載回來的
+`best_model.pth` 也可以，`metadata_path` 則指向對應 `run_id` 的 `metadata.json`。
+輸出為預測標籤、信心值，以及每個類別的機率。
 
-## 6) 重現某次實驗
+## 重現某次實驗
 
-打開那次實驗的 `outputs/<run>/metadata.json`：
+打開那次實驗的 `outputs/<run_id>/metadata.json`，依序執行：
 
-1. **程式碼版本**：把 `git_commit` 的值填進 Colab notebook Cell 1 的 `PIN_COMMIT`，
-   它會 checkout 那一版再跑。
-2. **超參數**：`config` 欄位就是當時設定 cell 的完整內容，照著填回去。
-3. **資料切分**：確認 `split_scheme` 與 `split_seed` 一致，跑完 Cell 6 之後比對
-   印出來的 `split_fingerprint` 跟 metadata 裡的是否相同。**不同就代表這兩次實驗
-   的測試集不一樣，數字不能互比。**
-4. **環境**：`pip_freeze.txt` 是當時的精確版本。torch 不建議在 Colab 上強制 pin
-   （會觸發數 GB 下載並有 CUDA/driver 不匹配風險），所以是用「記錄」而不是「固定」。
+1. 把 `git_commit` 的值填進 Colab Cell 1 的 `PIN_COMMIT`，執行該 cell 會 checkout 到那一版程式碼。
+   本機則自行執行 `git checkout <SHA>`。
+2. 照 `config` 欄位把設定 cell 的每個參數填回去，`RANDOM_SEED` 與 `SPLIT_SEED` 都要對上。
+3. 確認 `split_scheme` 與 `dataset_id` 一致。`dataset_version` 不同的話，資料本身就可能已經變動。
+4. 執行到切分 cell（Colab Cell 6 / 本機 Cell 5），比對印出的 `split_fingerprint` 與 metadata 裡的值。
+   **不同就代表兩次實驗的測試集不一樣，指標不能互相比較**，請回頭檢查 `SPLIT_SEED` 與三個比例。
+5. 需要完全一致的環境時，依 `pip_freeze.txt` 安裝。在 Colab 上不建議強制 pin `torch`，
+   會觸發數 GB 下載，且可能與 driver 不匹配。
+6. 執行後續 cell 完成訓練，再比對 `test_metrics`。
 
-### `git_commit` 的可信度
+## 改程式碼的流程
 
-這個欄位的正確性**靠你訓練前先 commit 並 push 的紀律，沒有程式在把關**。兩個會
-讓它變成虛構的情況：
+標準路徑：**在 VS Code 編輯 → commit → push → 回 Colab 執行 Cell 13（`git pull --ff-only`）**。
+有 `%autoreload 2`，不需要重啟執行階段，`model` / `history` / `best_state` 都還在。
 
-- 在 Colab 隨手改了模組但沒 commit → `HEAD` 還指著舊 commit，記下的 SHA 不是實際跑的程式碼
-- commit 了但沒 push → 那個 SHA 只存在 Colab VM，執行階段一關就消失
+Cell 12 需要 GitHub token：GitHub → Settings → Developer settings →
+**Fine-grained personal access token**，只勾這一個 repo、權限給 **Contents: Read and write**，
+存進 Colab Secrets 的 `GH_TOKEN`。
 
-真的被咬到的話，`env.collect_run_info()` 加兩行（`git status --porcelain` 和
-`git branch -r --contains HEAD`）就能把這兩種情況變成警告。
+### 要改程式碼前請注意
 
-## 7) 備註
+- **訓練進行中不要執行 Cell 13 或任何 `git pull`。** epoch 是在呼叫時才解析函式，
+  中途換掉程式碼會讓 `metadata.json` 記下的 `git_commit` 不等於實際執行的程式碼，而且不會有任何警告。
+- **訓練前先 commit 並 push。** `git_commit` 只記錄 `HEAD` 的 SHA，沒有程式檢查工作區是否乾淨、
+  或該 commit 是否已經推上遠端。未 commit 的修改、以及只存在 Colab VM 的 commit，都會讓這個欄位失去意義。
+- 不要調整 `constant.CLASS_NAMES` 的排序。`ImageFolder` 按字母排序決定索引
+  （`NORMAL=0, PNEUMONIA=1`），`data/split.py` 從同一份清單推導對應；兩者不一致會讓舊的
+  `best_model.pth` 配新的 `metadata.json` 反向預測，而且不會拋出例外。
+- 不要移除或改名 `metadata.json` 的 `model_name` / `img_size` / `idx_to_class`。
+  `infer_single.py` 讀這三個欄位，改掉會讓既有的 checkpoint 無法推論。新增欄位是安全的。
+- 往設定 cell 新增參數時，同步加進 `utils.CONFIG_KEYS`，否則該參數不會被記錄進 `metadata.json`。
 
-- 本訓練程式已使用 ImageNet 預訓練權重做遷移學習。
-- 由於資料集有類別不平衡，loss 會自動使用 class weights。
-- 在 Windows 上若 `num_workers` 過大可能不穩定，建議先使用 `0`。
+## 疑難排解
+
+| 問題 | 原因 | 解法 |
+| --- | --- | --- |
+| 想比較不同 seed 的結果 | — | 只改 `RANDOM_SEED`，`SPLIT_SEED` 保持不動，資料切分不會跟著變 |
+| 改了 `constant.py` / `utils.py` 的常數卻沒有生效 | `%autoreload 2` 只替換函式本體，模組層級的常數不會更新 | 重啟執行階段，從 Cell 1 重跑 |
+| 訓練途中 `FileNotFoundError`，訊息提到資料集快取可能已失效 | 換過執行階段，`plan` 裡的路徑指向已消失的快取 | 重跑下載與切分的 cell |
+| `KeyError: 設定 cell 缺少這些變數` | 設定 cell 的變數名打錯或漏掉 | 照訊息列出的名稱修正設定 cell |
+| `FileNotFoundError: 在 ... 底下找不到同時含 train/val/test 的資料夾` | `DATASET_LOCAL_DIR` 指到錯誤的層級 | 指向含 `train/val/test` 的那一層，或改回 `None` 從 Kaggle 下載 |
+| 下載資料時跳出登入輸入框 | 讀不到 Kaggle 憑證 | 檢查 Colab Secrets 兩筆名稱是否正確且已開啟 Notebook access；本機檢查 `~/.kaggle/kaggle.json` |
+| Windows 上 DataLoader 停住或崩潰 | notebook 中的多進程 DataLoader 在 Windows 容易出問題 | 設定 `NUM_WORKERS = 0` |
+| Colab 執行階段結束後找不到權重 | 權重寫在 VM 的本機磁碟 | 確認 Cell 2 的 Drive 掛載成功，`WEIGHTS_BASE` 才會指向 Drive |
+| `ValueError: train/val/test 比例必須加總為 1` | 三個 ratio 加總不等於 1 | 修正 `TRAIN_RATIO` / `VAL_RATIO` / `TEST_RATIO` |
+
+## 已知限制
+
+- 切分以單張影像為單位，同一位病人的多張影像可能同時落在 train 與 test，因此測試指標偏樂觀。
+  `plan_splits()` 預留 `group_key` 參數可改為分組切分，預設關閉。
 - `set_seed()` 沒有設定 `cudnn.deterministic`，`DataLoader` 也沒有固定 worker 種子，
-  所以同一個 seed 重跑**不保證** bit-level 一致（`metadata.json` 的
-  `deterministic: false` 就是在說這件事）。固定 `SPLIT_SEED` 移除的是「測試集根本
-  不一樣」這個大混淆因子，但不會讓 0.3% 的 F1 差異變得有意義。
-- 目前**沒有**處理同一位病人的影像同時落在 train 和 test 的問題。`plan_splits()`
-  留了 `group_key` 參數可以做分組切分，預設關閉。
+  同一個 seed 重跑不保證 bit-level 一致。固定 `SPLIT_SEED` 消除的是「測試集不同」這個混淆因子，
+  不代表小幅度的指標差異有意義。
+- 沒有 CLI 訓練腳本，訓練流程只能由 notebook 執行。
+- 決策方式固定為 argmax，沒有針對 recall 偏好調整分類門檻。
+- `requirements.txt` 只記錄版本下限，實際環境以每次訓練的 `pip_freeze.txt` 為準。
+- 本專案為學習用途，不是醫療器材，不可用於臨床診斷。
