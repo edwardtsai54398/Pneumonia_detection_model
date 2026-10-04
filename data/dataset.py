@@ -43,7 +43,7 @@ def ensure_kaggle_auth():
 
     import kagglehub
 
-    kagglehub.login()  # 會跳出輸入框，依序填 username 與 key
+    kagglehub.login()  # 會跳出輸入框要帳號與金鑰
     return "互動式登入"
 
 

@@ -39,7 +39,8 @@ def build_model(num_classes, device, model_name=DEFAULT_MODEL_NAME, pretrained=T
 
     if freeze_backbone:
         for name, param in model.named_parameters():
-            if "classifier" not in name and "fc" not in name:
+            # 只比對分類頭的屬性名開頭
+            if not (name.startswith("classifier.") or name.startswith("fc.")):
                 param.requires_grad = False
 
     return model.to(device)

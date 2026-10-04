@@ -68,7 +68,7 @@ Kaggle 憑證放在 `~/.kaggle/kaggle.json`，或設定 `KAGGLE_USERNAME` / `KAG
 ├── requirements.txt                 # 套件版本下限
 ├── data/
 │   ├── dataset.py                   # Kaggle 憑證與下載、transform、ImageFolder、DataLoader
-│   └── split.py                     # 索引式 70/15/15 重新切分、split_fingerprint、SampleListDataset
+│   └── split.py                     # 索引式 70/15/15 重新切分、病人分組、SampleListDataset
 ├── engine/
 │   ├── trainer.py                   # 單一 epoch 迴圈、train_model（backbone 解凍、early stopping）、指標計算
 │   └── visualize.py                 # plot_history、plot_cm、plot_class_distribution
@@ -110,9 +110,21 @@ chest_xray/
 | 切分 | 內容 |
 | --- | --- |
 | 原始 Kaggle 切分 | 資料集附帶的 `train/val/test`。`val` 只有 16 張，用它做 early stopping 與選模型等於在選噪音。notebook 只以 `count_images()` 清點並繪圖，不拿它訓練 |
-| `regrouped_70_15_15` | `collect_all_images()` 收齊全部 5856 張，再由 `plan_splits()` 按類別分層切成 70/15/15。這是實際訓練用的切分，也是寫進 `metadata.json` 的 `split_scheme` 值 |
+| `regrouped_70_15_15_grouped_by_patient` | `collect_all_images()` 收齊全部 5856 張，再由 `plan_splits()` 按類別分層切成 70/15/15，且同一位病人的影像整組落在同一個 split。這是實際訓練用的切分，也是寫進 `metadata.json` 的 `split_scheme` 值 |
 
 不同 `split_scheme` 的數字不要直接比較，測試集的組成不同。
+
+### 病人層級的分組
+
+`patient_group_key()` 從檔名取出病人編號（`person1_bacteria_1.jpeg` → `person1`），
+`plan_splits(group_key=...)` 再讓同一位病人的所有影像進同一個 split。沒有這層分組時，
+同一位病人的 A 片在 train、B 片在 test，模型可以靠「認得這個人」而不是「認得肺炎」
+拿到高分，測試指標會偏樂觀。設定 cell 的 `GROUP_BY_PATIENT = False` 可退回逐張切分。
+
+分組後的切分單位是不可分割的群組，所以兩種模式用兩種分配法：逐張切分用最大餘額法
+（比例精確），分組切分用貪婪裝箱（大組先放，每次放進張數離配額最遠的 split）。後者
+讓張數盡量接近 70/15/15 但不保證精確——誤差下限由群組大小分佈決定。切分 cell 會印出
+每個類別的群組數，若群組數等於張數，表示檔名沒有對上病人編號、分組等於沒開。
 
 ## 訓練
 
@@ -127,8 +139,9 @@ chest_xray/
 | `RANDOM_SEED` | 只影響權重初始化、augmentation 與 batch 順序 |
 | `SPLIT_SEED` | 只影響 train/val/test 怎麼切。比較不同 `RANDOM_SEED` 時必須固定 |
 | `TRAIN_RATIO` / `VAL_RATIO` / `TEST_RATIO` | 切分比例，三者必須加總為 1 |
+| `GROUP_BY_PATIENT` | 同一位病人的影像是否整組進同一個 split，預設 `True`。關掉會退回逐張切分 |
 | `FREEZE_BACKBONE` | 前幾個 epoch 是否只訓練分類頭 |
-| `UNFREEZE_EPOCH` | 在第幾個 epoch 解凍 backbone |
+| `UNFREEZE_EPOCH` | 在第幾個 epoch 解凍 backbone。`None` 表示全程不解凍 |
 | `BACKBONE_LR_FACTOR` | 解凍後 backbone 的學習率 = `LR * BACKBONE_LR_FACTOR` |
 | `PATIENCE` | early stopping 的耐心值，監看驗證集 F1 |
 | `NUM_WORKERS` | DataLoader 工作進程數。Windows 上建議設為 `0` |
@@ -146,7 +159,7 @@ chest_xray/
 | 3 | 2 | **實驗設定** |
 | 4 | 3 | 下載資料與清點 |
 | 5 | 4 | 原始切分的類別分佈圖 |
-| 6 | 5 | 重新切分 70/15/15，印出 `split_fingerprint` |
+| 6 | 5 | 重新切分 70/15/15（按病人分組），印出群組數與各 split 的類別分佈 |
 | 7 | 6 | `set_seed()`、建立 dataset / dataloader / model / optimizer / scheduler |
 | 8 | 7 | 訓練 |
 | 9 | 8 | 測試集評估 |
@@ -184,6 +197,7 @@ chest_xray/
 | `img_size` | 訓練時的輸入解析度，推論會沿用同一個值 |
 | `class_to_idx` / `idx_to_class` | 類別與索引的對應。`infer_single.py` 用它把預測索引轉成標籤 |
 | `best_val_f1` | 驗證集最佳 F1，也是選取 checkpoint 的依據 |
+| `best_epoch` | 被存下來的那一個 epoch（0-based，對得上 `history.json` 的 `epoch`）。配合 `history` 的長度就看得出 early stopping 是在最佳點之後多跑了幾個 epoch |
 | `test_metrics` | 測試集的 loss / accuracy / precision / recall / f1 與 tp、tn、fp、fn |
 | `num_parameters` | 模型參數量，單位為百萬 |
 | `train_time_per_epoch` | 每個 epoch 的平均秒數 |
@@ -192,7 +206,6 @@ chest_xray/
 | `python_version` / `torch_version` / `torchvision_version` / `cuda_version` / `gpu` / `platform` / `in_colab` | 環境快照 |
 | `deterministic` | 固定為 `false`，表示同一個 seed 重跑不保證 bit-level 一致 |
 | `split_scheme` / `split_seed` / `split_ratios` / `split_counts` | 切分方式、種子、比例與各 split 的類別分佈 |
-| `split_fingerprint` | 這次切分的指紋（sha256）。兩次實驗要能互相比較，這個值必須相同 |
 | `dataset_id` / `dataset_version` | Kaggle 資料集 ID 與版本號（共用快取路徑解析不到版本時為 `null`） |
 
 ## 單張推論
@@ -218,8 +231,10 @@ python infer_single.py `
    本機則自行執行 `git checkout <SHA>`。
 2. 照 `config` 欄位把設定 cell 的每個參數填回去，`RANDOM_SEED` 與 `SPLIT_SEED` 都要對上。
 3. 確認 `split_scheme` 與 `dataset_id` 一致。`dataset_version` 不同的話，資料本身就可能已經變動。
-4. 執行到切分 cell（Colab Cell 6 / 本機 Cell 5），比對印出的 `split_fingerprint` 與 metadata 裡的值。
-   **不同就代表兩次實驗的測試集不一樣，指標不能互相比較**，請回頭檢查 `SPLIT_SEED` 與三個比例。
+4. 執行到切分 cell（Colab Cell 6 / 本機 Cell 5），比對印出的各 split 類別張數與 metadata 裡的
+   `split_counts`。**不同就代表兩次實驗的測試集不一樣，指標不能互相比較**，請回頭檢查
+   `SPLIT_SEED`、三個比例與 `GROUP_BY_PATIENT`。注意張數相同不保證名單相同——切分程式本身改過的話，
+   同一個種子也可能切出不同的名單，所以第 1 步的 `git_commit` 要先對上。
 5. 需要完全一致的環境時，依 `pip_freeze.txt` 安裝。在 Colab 上不建議強制 pin `torch`，
    會觸發數 GB 下載，且可能與 driver 不匹配。
 6. 執行後續 cell 完成訓練，再比對 `test_metrics`。
@@ -262,8 +277,6 @@ Cell 12 需要 GitHub token：GitHub → Settings → Developer settings →
 
 ## 已知限制
 
-- 切分以單張影像為單位，同一位病人的多張影像可能同時落在 train 與 test，因此測試指標偏樂觀。
-  `plan_splits()` 預留 `group_key` 參數可改為分組切分，預設關閉。
 - `set_seed()` 沒有設定 `cudnn.deterministic`，`DataLoader` 也沒有固定 worker 種子，
   同一個 seed 重跑不保證 bit-level 一致。固定 `SPLIT_SEED` 消除的是「測試集不同」這個混淆因子，
   不代表小幅度的指標差異有意義。

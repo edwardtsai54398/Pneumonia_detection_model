@@ -65,9 +65,7 @@ def collect_run_info():
         "torchvision_version": _torchvision_version(),
         "cuda_version": torch.version.cuda if cuda_available else None,
         "gpu": torch.cuda.get_device_name(0) if cuda_available else None,
-        # set_seed() 沒有設 cudnn.deterministic，DataLoader 也沒有固定 worker 種子，
-        # 所以同一個 seed 重跑不保證 bit-level 一致。誠實記下來，免得日後把
-        # run-to-run 的噪音當成真的差異。
+        # 重跑不保證結果一致
         "deterministic": False,
         "in_colab": in_colab(),
         "platform": f"{platform.system()} {platform.release()}",

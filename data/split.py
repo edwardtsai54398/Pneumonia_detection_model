@@ -1,15 +1,8 @@
-"""索引式的資料切分：只產生「哪張圖屬於哪個 split」的名單，不建立實體資料夾。
-
-為什麼不建 symlink 樹：原本的做法是在 /content/preprocessedData 真的建出
-train/val/test 資料夾並為 5856 張圖各建一個 symlink，再交給 ImageFolder 掃。
-那個做法的缺陷幾乎都來自「建立檔案」這個動作本身——檔名撞到會 FileExistsError
-（而且是在 rmtree 砍掉舊資料之後才爆）、symlink 指向唯讀快取所以 runtime 重啟
-後全部失效（而 ImageFolder 掃目錄時不會發現，要等 epoch 中途 PIL 去讀才爆）、
-Windows 建 symlink 需要額外權限。不建資料夾，這些問題就不存在，而且切分變成
-可以 hash 並寫進 metadata.json 的資料結構，不是得去信任的檔案系統狀態。
+"""
+索引式的資料切分：只產生「哪張圖屬於哪個 split」的名單，不建立實體資料夾。
 """
 
-import hashlib
+import re
 from pathlib import Path
 
 import numpy as np
@@ -22,18 +15,18 @@ from data.dataset import build_transforms
 SPLITS = ["train", "val", "test"]
 IMG_EXTS = {".jpeg", ".jpg", ".png"}
 
-# 從 CLASS_NAMES 推導，不是從觀察到的資料推導。這很重要：如果某個 split 剛好
-# 缺了一個類別，從資料推導會產生不連續的索引，而 infer_single.py 是用
-# `for i in range(num_classes): idx_to_class[i]` 讀的，缺一格就 KeyError。
+# 由 CLASS_NAMES 推導
 CLASS_TO_IDX = {name: idx for idx, name in enumerate(CLASS_NAMES)}
 IDX_TO_CLASS = {idx: name for name, idx in CLASS_TO_IDX.items()}
 
 
 def count_images(root):
-    """清點原始資料集每個 split / 類別的張數，回傳 {split: {class: count}}。
+    """清點原始資料集每個 split / 類別的張數。
 
     不寫死副檔名（原本的 glob("*.jpeg") 換個資料集就會對不上），並且過濾掉
     非目錄的項目，免得 split 資料夾裡有 .DS_Store 之類的東西就壞掉。
+
+    回傳 {split: {class_name: count}}
     """
     root = Path(root)
     counts = {}
@@ -52,11 +45,10 @@ def count_images(root):
 def collect_all_images(root):
     """把原始 train/val/test 的圖全部收集起來，依類別分組。
 
-    回傳 {"NORMAL": [Path, ...], "PNEUMONIA": [Path, ...]}，兩個清單都已排序，
-    所以同一份資料集每次收集的順序都一樣（切分的可重現性靠這個）。
-
     刻意不做「非 NORMAL 就當 PNEUMONIA」的歸類：遇到 CLASS_NAMES 以外的目錄名
     直接 raise，寧可吵一下也不要把不明資料默默塞進某一類。
+
+    回傳 {class_name: [Path, ...]}，例如 {"NORMAL": [...], "PNEUMONIA": [...]}
     """
     root = Path(root)
     collected = {name: [] for name in CLASS_NAMES}
@@ -76,9 +68,6 @@ def collect_all_images(root):
                 if file.suffix.lower() in IMG_EXTS:
                     collected[class_dir.name].append(file)
 
-    # 全域排序，讓結果不依賴走訪順序。只在每個目錄內排序的話，整份清單的順序
-    # 會跟著 SPLITS 的順序走——哪天有人改了那個順序，切分結果就會跟著變，而
-    # 那是無聲的：fingerprint 會變但沒人知道為什麼。
     for name in collected:
         collected[name].sort()
 
@@ -90,6 +79,11 @@ def _allocate(total, ratios):
 
     單純對每一份取 int() 會把餘數整個丟掉——1583 張配 .7/.15/.15 會變成
     1108+237+237=1582，少一張。這裡把餘數補給小數部分最大的那幾份。
+
+    回傳 [count, ...]，長度與 ratios 相同、順序與 ratios 一一對應（呼叫端
+    傳的是 (train, val, test)，所以第 0/1/2 個就是 train/val/test 的份額）。
+    每個 count 是「切分單位」的個數而不是張數
+    加總保證等於 total。
     """
     exact = [total * r for r in ratios]
     base = [int(x) for x in exact]
@@ -103,6 +97,61 @@ def _allocate(total, ratios):
     return base
 
 
+def patient_group_key(path):
+    """從檔名取出病人識別碼，給 plan_splits(group_key=...) 用。
+
+    這份資料集的 PNEUMONIA 檔名帶病人編號，NORMAL 不帶：
+
+        train/PNEUMONIA/person1_bacteria_1.jpeg  -> 'train/PNEUMONIA/person1'
+        train/PNEUMONIA/person1_virus_6.jpeg     -> 'train/PNEUMONIA/person1'
+        train/NORMAL/IM-0115-0001.jpeg           -> 'train/NORMAL/IM-0115-0001'
+
+    為什麼鍵裡要含原始的 split 與類別：collect_all_images 會把原始 train/val/test
+    三棵樹合併成一份清單，而原始 train 和原始 test 底下都存在 person1_*，它們
+    是不是同一個人光看檔名無法確定。只用 'person1' 當鍵會把兩批可能無關的影像
+    硬綁成一組——不會報錯，只是分組變得沒有意義。寧可把同一人誤拆成兩組（退化
+    成接近逐張切分），也不要把兩個人誤併成一組（那會讓切分的統計假設失效）。
+
+    NORMAL 沒有編號可抽，就讓每張圖自己成為一組。
+
+    回傳一個字串形如 "{原始 split}/{類別目錄名}/{病人編號或檔名 stem}"
+    """
+    parts = Path(path).parts[-3:]
+    if len(parts) < 3:
+        raise ValueError(f"路徑層級不足，無法取出 split/class/filename: {path}")
+    split, class_name, filename = parts
+    match = re.match(r"(person\d+)_", filename)
+    stem = match.group(1) if match else Path(filename).stem
+    return f"{split}/{class_name}/{stem}"
+
+
+def _allocate_groups(units, ratios, rng):
+    """把群組分配到各 split，讓「張數」盡量接近 ratios。
+
+    做法是 LPT（longest processing time first）：大組先放，每次放進「離自己的
+    張數配額還差最多」的那個 split。大組必須先放——小組留到後面才有東西可以
+    填補誤差；反過來先放小組，最後那個大組不管丟哪都會把該 split 撐爆。
+
+    回傳 [[unit_idx, ...], ...]：
+      外層  長度與順序對應 SPLITS
+      內層  units 的「索引」，不是 Path 也不是張數——呼叫端要用 units[i] 才拿
+            得到那一組的檔案清單。
+    """
+    quota = [sum(len(u) for u in units) * r for r in ratios]
+
+    order = sorted(
+        rng.permutation(len(units)), key=lambda i: len(units[i]), reverse=True
+    )
+
+    buckets = [[] for _ in SPLITS]
+    assigned = [0] * len(SPLITS)
+    for i in order:
+        s = max(range(len(SPLITS)), key=lambda s: quota[s] - assigned[s])
+        buckets[s].append(i)
+        assigned[s] += len(units[i])
+    return buckets
+
+
 def plan_splits(
     all_images,
     *,
@@ -114,15 +163,9 @@ def plan_splits(
 ):
     """依比例切出 train/val/test 名單，每個類別各自切分（stratified）。
 
-    回傳 {"train": [(Path, class_idx), ...], "val": [...], "test": [...]}。
+    回傳 {split: [(path, class_idx), ...]}
 
-    參數刻意叫 split_seed 而不是 seed：這樣把訓練用的種子誤傳進來
-    （plan_splits(..., seed=RANDOM_SEED)）會直接 TypeError，而不是無聲地
-    讓「換 seed 比較穩定性」同時換掉整個資料切分。
-
-    group_key 預設 None（純按檔案切分）。給一個 Path -> 群組鍵 的函式時會改成
-    整組一起進同一個 split，用來避免同一位病人的影像同時出現在 train 和 test。
-    這會讓實際張數不再精確等於比例（比例是套在群組數上）。
+    group_key 預設 None（純按檔案切分）。給一個 Path 回傳 群組鍵(str) t，用來避免同一位病人的影像同時出現在 train 和 test。
     """
     ratios = (train_ratio, val_ratio, test_ratio)
     if any(r < 0 for r in ratios):
@@ -139,7 +182,7 @@ def plan_splits(
         files = all_images.get(class_name, [])
         class_idx = CLASS_TO_IDX[class_name]
 
-        # 切分單位：預設是單張圖，給了 group_key 就是一整個群組
+        # 切分單位：單張圖或一個群組
         if group_key is None:
             units = [[f] for f in files]
         else:
@@ -148,17 +191,21 @@ def plan_splits(
                 groups.setdefault(group_key(f), []).append(f)
             units = [groups[k] for k in sorted(groups)]
 
-        order = rng.permutation(len(units))
-        counts = _allocate(len(units), ratios)
+        if group_key is None:
+            order = rng.permutation(len(units))
+            counts = _allocate(len(units), ratios)
+            buckets = []
+            start = 0
+            for n in counts:
+                buckets.append(order[start : start + n])
+                start += n
+        else:
+            buckets = _allocate_groups(units, ratios, rng)
 
-        start = 0
-        for split, n in zip(SPLITS, counts):
-            for i in order[start : start + n]:
+        for split, bucket in zip(SPLITS, buckets):
+            for i in bucket:
                 plan[split].extend((f, class_idx) for f in units[i])
-            start += n
 
-    # 把每個 split 內部打散，這樣即使之後有人用 shuffle=False 也不會拿到
-    # 「先全部 NORMAL 再全部 PNEUMONIA」的順序。
     for split in SPLITS:
         samples = plan[split]
         plan[split] = [samples[i] for i in rng.permutation(len(samples))]
@@ -167,7 +214,16 @@ def plan_splits(
 
 
 def split_counts(plan):
-    """每個 split 的類別分佈，{split: {class_name: count}}，值都是 int（可 JSON 化）。"""
+    """每個 split 的類別分佈。
+
+    回傳 {split: {class_name: count}}：
+      split       直接沿用 plan 的鍵，也就是重切後的 "train"/"val"/"test"。
+      class_name  固定列出 CLASS_NAMES 的每一個類別，就算該 split 一張都沒有
+                  也會有這一格、值為 0——這樣「某個 split 掉了一整個類別」
+                  在印出來的表上是看得見的 0，而不是消失的一列。
+      count       張數，刻意轉成 python int 而不是 np.int64，才能直接
+                  json.dump 進 metadata.json。
+    """
     return {
         split: {
             name: int(sum(1 for _, idx in samples if idx == CLASS_TO_IDX[name]))
@@ -177,27 +233,20 @@ def split_counts(plan):
     }
 
 
-def _relative_key(path):
-    """用原始樹裡的 split/class/filename 當識別碼，跨機器穩定。
+def group_counts(all_images, group_key):
+    """每個類別的群組數。
 
-    不用完整路徑，因為 Colab 是 /kaggle/input/... 而本機是別的位置，
-    否則同一個切分在兩台機器上會算出不同的 fingerprint。
+    用來確認 group_key 真的抓到了病人編號：如果群組數等於張數，表示沒有任何
+    檔名被分到同一組（正規表示式沒對上），分組切分就等於沒開。
+
+    回傳 {class_name: count}：
+      count       該類別底下相異 group_key 的數量，也就是切分單位的個數，
+                  不是張數。
     """
-    return "/".join(Path(path).parts[-3:])
-
-
-def split_fingerprint(plan):
-    """切分內容的 sha256。兩次實驗要能互相比較，這個值必須相同。
-
-    這是讓「seed-43 的 test 有 172/238 張在 seed-42 的 train 裡」這種事
-    事後從兩份 metadata.json 就看得出來的東西。
-    """
-    h = hashlib.sha256()
-    for split in SPLITS:
-        h.update(split.encode())
-        for key in sorted(f"{_relative_key(p)}:{idx}" for p, idx in plan[split]):
-            h.update(key.encode())
-    return h.hexdigest()
+    return {
+        name: len({group_key(f) for f in all_images.get(name, [])})
+        for name in CLASS_NAMES
+    }
 
 
 class SampleListDataset(Dataset):
@@ -206,6 +255,16 @@ class SampleListDataset(Dataset):
     暴露 .targets / .classes / .class_to_idx，因為 compute_class_weights 讀
     dataset.targets，而 make_dataloaders 本來就是泛型的——所以 trainer 那邊
     完全不用改。
+
+    對外的資料形狀（刻意與 ImageFolder 同義，下游才能互換）：
+      .samples        [(Path, class_idx), ...]，順序即 index 的順序；路徑一律
+                      正規化成 Path、類別一律 int，不管傳進來的是 str 還是
+                      np.int64。
+      .targets        [class_idx, ...]，與 .samples 同順序、同長度。只有標籤
+                      沒有路徑，給 compute_class_weights 數類別分佈用。
+      .class_to_idx   {class_name: idx}
+      .classes        [class_name, ...]，依 idx 由小到大排列，所以
+                      classes[idx] 就是該索引的類別名。
     """
 
     def __init__(
@@ -223,9 +282,19 @@ class SampleListDataset(Dataset):
         self.targets = [idx for _, idx in self.samples]
 
     def __len__(self):
+        """樣本張數（int），也就是 index 的合法範圍是 0 .. len-1。"""
         return len(self.samples)
 
     def __getitem__(self, index):
+        """回傳一筆 (image, target)，與 ImageFolder 的單筆格式相同。
+
+        image   套過 transform 之後的結果。配 build_transforms 時是形狀
+                (3, img_size, img_size)、已做 ImageNet 正規化的 float tensor
+                （灰階 X 光被複製成 3 通道）；transform=None 時則是 loader
+                吐出的 PIL RGB Image，沒有縮放也沒有正規化。
+        target  int，class_idx 本身（不是 one-hot、不是類別名），可直接餵給
+                CrossEntropyLoss。
+        """
         path, target = self.samples[index]
         image = self.loader(str(path))
         if self.transform is not None:
@@ -242,6 +311,9 @@ def _verify_paths(samples, split):
     刻意檢查全部而不是抽樣：重切之後每個 split 的檔案來自原始的三個 split，
     所以「原始資料少了一部分」的情況下，抽樣很容易整批漏掉（實測抽 20 筆會
     漏掉只佔 8/45 的那批）。5856 次 stat 在訓練前跑一次的成本可以忽略。
+
+    沒有回傳值（None）——這是個純斷言：不是空清單、而且每個路徑都存在時就
+    靜靜返回，否則 raise。回傳 None 不代表「沒問題但也沒檢查」。
     """
     if not samples:
         raise ValueError(f"{split} split 是空的")
@@ -259,7 +331,18 @@ def build_datasets_from_plan(plan, img_size=224, verify=True):
 
     回傳與 data.dataset.build_datasets 相同的三元組
     (image_datasets, class_to_idx, idx_to_class)，所以 train_model /
-    make_dataloaders / save_results 都不用改。
+    make_dataloaders / save_results 都不用改：
+      image_datasets  {split: SampleListDataset}，三個 split 的鍵都在，各自
+                      已套好對應的 transform——train 那份含隨機增強（所以同
+                      一個 index 每次取到的 tensor 不同），val/test 那份只有
+                      縮放與正規化，是確定性的。
+      class_to_idx    {class_name: idx}
+      idx_to_class    {idx: class_name}，正好是前者的反轉；idx 連續覆蓋
+                      0 .. len(CLASS_NAMES)-1，因為它由 CLASS_NAMES 推導而
+                      不是從 plan 觀察——即使某個 split 缺了一個類別也不會
+                      出現斷號（infer_single.py 是用 range 逐格讀的）。
+    後兩者是模組級 CLASS_TO_IDX / IDX_TO_CLASS 的複本，呼叫端改動它們不會
+    汙染模組狀態，也不會影響已經建好的 dataset。
     """
     tf = build_transforms(img_size=img_size)
 

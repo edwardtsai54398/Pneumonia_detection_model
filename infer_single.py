@@ -29,8 +29,7 @@ def main():
     model_name = metadata.get("model_name")
     num_classes = len(idx_to_class)
 
-    # pretrained=False：checkpoint 的 load_state_dict(strict=True) 會覆蓋所有參數，
-    # 推論時不需要先下載 ImageNet 預訓練權重。
+    # 推論不需預訓練權重
     model = build_model(num_classes, device, model_name=model_name, pretrained=False)
     state_dict = torch.load(args.model_path, map_location=device)
     model.load_state_dict(state_dict)

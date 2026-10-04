@@ -2,10 +2,7 @@ import matplotlib
 import numpy as np
 import matplotlib.pyplot as plt
 
-# 類別固定配色，順序對齊 constant.CLASS_NAMES，不循環、不依大小重新上色。
-# 這兩個色（matplotlib 的 tab:blue / tab:orange）通過色盲安全檢查：
-# 最差相鄰配對 ΔE 24.6（protan）、31.8（tritan），遠高於 8 的門檻。
-# tab:orange 對白底的對比是 2.47（低於 3:1），所以長條一律標上數值。
+# 固定配色，不依大小變色
 CLASS_COLORS = ["#1f77b4", "#ff7f0e"]
 
 
@@ -109,7 +106,7 @@ def plot_class_distribution(counts, title="Class Distribution", show=False):
 
     x = np.arange(len(groups), dtype=float)
     n_series = len(class_names)
-    # 總寬 0.76，每個系列之間留 0.04 的空隙（約 2px），靠間隙而不是外框線分隔。
+    # 總寬 0.76，系列間留 0.04 空隙
     gap = 0.04
     width = (0.76 - gap * (n_series - 1)) / n_series
 
@@ -123,8 +120,7 @@ def plot_class_distribution(counts, title="Class Distribution", show=False):
             label=name,
             color=CLASS_COLORS[i % len(CLASS_COLORS)],
         )
-        # 每根都標數值：長條本身對白底的對比不足 3:1，數值標籤就是補償，
-        # 同時讓讀者不必靠座標軸估算。
+        # 每根都標數值，補足對比不足
         ax.bar_label(bars, padding=2, fontsize=9)
 
     ax.set_xticks(x, groups)
@@ -132,13 +128,13 @@ def plot_class_distribution(counts, title="Class Distribution", show=False):
     ax.set_title(title, fontsize=14)
     ax.legend(frameon=False)
 
-    # 只留 y 方向的細實線格線（虛線會讀成「門檻」或「推估」），並壓掉右上邊框。
+    # 只留 y 方向的細實線格線
     ax.grid(axis="y", linewidth=0.5, alpha=0.3)
     ax.set_axisbelow(True)
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
 
-    # 給最高的數值標籤留一點空間，免得被圖的上緣切掉
+    # 留空間給最高的數值標籤
     ax.margins(y=0.12)
 
     fig.tight_layout()

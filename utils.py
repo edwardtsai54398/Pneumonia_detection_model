@@ -39,8 +39,7 @@ class EpochTimer:
         return avg
 
 
-# notebook 的設定 cell 用大寫變數，collect_config() 再把它們收進 metadata.json。
-# 往設定 cell 加一個參數時，記得同步加到這裡，否則不會被記錄下來。
+# 新增設定參數要同步加進這裡
 CONFIG_KEYS = (
     "EXPERIMENT_NAME",
     "MODEL_NAME",
@@ -59,6 +58,7 @@ CONFIG_KEYS = (
     "TRAIN_RATIO",
     "VAL_RATIO",
     "TEST_RATIO",
+    "GROUP_BY_PATIENT",
 )
 
 
@@ -113,6 +113,7 @@ def save_results(
     model,
     best_state,
     best_val_f1,
+    best_epoch,
     test_metrics,
     class_to_idx,
     idx_to_class,
@@ -129,27 +130,24 @@ def save_results(
 
     num_parameters = sum(p.numel() for p in model.parameters()) / 1e6  # 單位：M
 
-    # 權重可以寫到別的地方（Colab 寫 Drive，才不會隨執行階段消失），
-    # 文字產物與圖留在 out_dir（也就是 repo 的 outputs/，要進版控）。
+    # 權重可另存，文字產物留在 out_dir
     weights_dir = Path(weights_dir) if weights_dir is not None else out_dir
     weights_dir.mkdir(parents=True, exist_ok=True)
     torch.save(best_state, weights_dir / "best_model.pth")
 
     metadata = {
-        # ---- 既有欄位，順序與名稱都不要動 --------------------------------
-        # infer_single.py 讀 idx_to_class / img_size / model_name 這三個；
-        # 改名或移除會讓既有的 checkpoint 無法推論。新增欄位則是安全的，
-        # 因為 json.load 會忽略多出來的 key。
         "model_name": model_name,
         "num_parameters": num_parameters,
         "class_to_idx": class_to_idx,
         "idx_to_class": idx_to_class,
         "img_size": img_size,
         "best_val_f1": best_val_f1,
+        # 0-based，對齊 history
+        "best_epoch": best_epoch,
         "test_metrics": {k: v for k, v in test_metrics.items() if k != "cm"},
         "train_time_per_epoch": train_time_per_epoch,
     }
-    # ---- 可重現性欄位 ----------------------------------------------------
+    # 可重現性欄位
     if config is not None:
         metadata["config"] = dict(config)
     if run_info is not None:

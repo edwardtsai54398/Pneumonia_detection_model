@@ -81,7 +81,7 @@ def run_one_epoch(model, device, loader, criterion, optimizer=None, positive_ind
         total_fp += fp
         total_fn += fn
 
-        # true_idx*2 + pred_idx -> flattened index into a 2x2 matrix, independent of positive_index
+        # 攤平成 2x2 索引
         flat = (labels.cpu() * 2 + preds.cpu()).long()
         cm += torch.bincount(flat, minlength=4).reshape(2, 2)
 
@@ -117,18 +117,21 @@ def train_model(
     frozen and the optimizer should contain only classifier params before this
     call. At unfreeze_epoch, backbone params are unfrozen and added as a
     second param group with lr * backbone_lr_factor.
+
+    unfreeze_epoch=None 表示全程不解凍。
     """
     best_state = None
     monitor_mode = "min" if "loss" in learning_depend_metric else "max"
     best_score = float("inf") if monitor_mode == "min" else float("-inf")
     best_cm = None
+    best_epoch = None
     history = []
     patience_counter = 0
 
     for epoch in range(epochs):
         print(f"===== Epoch {epoch + 1}/{epochs} =====")
 
-        if epoch == unfreeze_epoch and should_freeze_backbone:
+        if unfreeze_epoch is not None and epoch == unfreeze_epoch and should_freeze_backbone:
             print("===== Unfreezing Backbone =====")
             backbone_params = []
             for name, param in model.named_parameters():
@@ -170,6 +173,7 @@ def train_model(
         if is_best:
             best_score = score
             best_cm = val_m["cm"]
+            best_epoch = epoch
             best_state = copy.deepcopy(model.state_dict())
             patience_counter = 0
         else:
@@ -179,7 +183,7 @@ def train_model(
             print(f"Early stopping triggered at epoch {epoch + 1} (no improvement for {patience} epochs)")
             break
 
-    return best_state, best_score, best_cm, history
+    return best_state, best_score, best_cm, best_epoch, history
 
 
 def print_metrics(train_m, val_m):
