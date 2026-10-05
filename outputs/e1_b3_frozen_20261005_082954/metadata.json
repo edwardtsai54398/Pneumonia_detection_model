@@ -1,0 +1,79 @@
+{
+  "model_name": "efficientnet_b3",
+  "num_parameters": 10.699306,
+  "class_to_idx": {
+    "NORMAL": 0,
+    "PNEUMONIA": 1
+  },
+  "idx_to_class": {
+    "0": "NORMAL",
+    "1": "PNEUMONIA"
+  },
+  "img_size": 224,
+  "best_val_f1": 0.9624413145539906,
+  "best_epoch": 5,
+  "test_metrics": {
+    "loss": 0.19473273865454288,
+    "accuracy": 0.9214123006833713,
+    "precision": 0.9735099337748344,
+    "recall": 0.9173166926677067,
+    "f1": 0.944578313253012,
+    "tp": 588,
+    "tn": 221,
+    "fp": 16,
+    "fn": 53
+  },
+  "train_time_per_epoch": 131.12793020407358,
+  "config": {
+    "experiment_name": "e1_b3_frozen",
+    "model_name": "efficientnet_b3",
+    "image_size": 224,
+    "batch_size": 32,
+    "epochs": 30,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "random_seed": 43,
+    "split_seed": 42,
+    "freeze_backbone": true,
+    "unfreeze_epoch": null,
+    "backbone_lr_factor": 0.1,
+    "patience": 6,
+    "num_workers": 2,
+    "train_ratio": 0.7,
+    "val_ratio": 0.15,
+    "test_ratio": 0.15,
+    "group_by_patient": true
+  },
+  "git_commit": "b868964a6b3e3d4a51c4bd0247879a66389ee5ce",
+  "python_version": "3.13.15",
+  "torch_version": "2.11.0+cu130",
+  "torchvision_version": "0.26.0+cu130",
+  "cuda_version": "13.0",
+  "gpu": "Tesla T4",
+  "deterministic": false,
+  "in_colab": true,
+  "platform": "Linux 6.6.122+",
+  "split_scheme": "regrouped_70_15_15_grouped_by_patient",
+  "split_seed": 42,
+  "split_ratios": {
+    "train": 0.7,
+    "val": 0.15,
+    "test": 0.15
+  },
+  "split_counts": {
+    "train": {
+      "NORMAL": 1108,
+      "PNEUMONIA": 2991
+    },
+    "val": {
+      "NORMAL": 238,
+      "PNEUMONIA": 641
+    },
+    "test": {
+      "NORMAL": 237,
+      "PNEUMONIA": 641
+    }
+  },
+  "dataset_id": "paultimothymooney/chest-xray-pneumonia",
+  "dataset_version": null
+}
