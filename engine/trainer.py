@@ -3,6 +3,23 @@ import copy
 import torch
 
 
+def set_frozen_modules_eval(model):
+    """把『完全沒有可訓練參數』的子模組切成 eval mode。
+
+    requires_grad=False 只凍住參數(weight/bias)，管不到 BatchNorm 的 running_mean
+    / running_var——那兩個 buffer 是否更新由模組在不在 train mode 決定。model.train()
+    會把被凍結的骨幹也設成 train mode，導致凍結骨幹的 BN 統計量每個 batch 仍被改寫、
+    Stochastic Depth / Dropout 也仍在作用，使訓練時的特徵和評估時不一致。
+
+    這裡依『當下的 requires_grad』判斷：凍結的模組切回 eval、可訓練的留在 train。
+    因此它會自動跟著 FREEZE_BACKBONE / UNFREEZE_EPOCH 的狀態走——解凍後骨幹有了
+    可訓練參數，就不會再被切 eval，不需把那些旗標傳進來。
+    """
+    for module in model.modules():
+        if not any(p.requires_grad for p in module.parameters(recurse=True)):
+            module.eval()
+
+
 def compute_class_weights(dataset, num_classes, device):
     targets = torch.tensor(dataset.targets, dtype=torch.long)
     counts = torch.bincount(targets, minlength=num_classes).float()
@@ -50,6 +67,10 @@ def run_one_epoch(model, device, loader, criterion, optimizer=None, positive_ind
     """
     is_train = optimizer is not None
     model.train(is_train)
+    # 訓練時把凍結的部分切回 eval，避免凍結骨幹的 BN 統計量被改寫。
+    # 評估時 model.train(False) 已讓整個模型進 eval，不需另外處理。
+    if is_train:
+        set_frozen_modules_eval(model)
 
     total_loss = 0.0
     total_samples = 0

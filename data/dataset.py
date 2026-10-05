@@ -111,7 +111,8 @@ def build_transforms(img_size=224):
     eval_tf = transforms.Compose(
         [
             transforms.Grayscale(num_output_channels=3),
-            transforms.Resize((img_size, img_size)),
+            transforms.Resize((256, 256)),
+            transforms.CenterCrop(img_size),
             transforms.ToTensor(),
             transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
         ]
@@ -151,6 +152,7 @@ def make_dataloaders(datasets, batch_size, num_workers=2):
             shuffle=(split == "train"),
             num_workers=num_workers,
             pin_memory=torch.cuda.is_available(),
+            drop_last=(split == "train"),
         )
         for split in datasets
     }
