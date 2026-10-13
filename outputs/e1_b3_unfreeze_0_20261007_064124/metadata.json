@@ -25,7 +25,7 @@
   },
   "train_time_per_epoch": 142.79375517368317,
   "config": {
-    "experiment_name": "e1_b3_unfreeze_4",
+    "experiment_name": "e1_b3_unfreeze_0",
     "model_name": "efficientnet_b3",
     "image_size": 224,
     "batch_size": 32,
