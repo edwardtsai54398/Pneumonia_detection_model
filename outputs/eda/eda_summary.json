@@ -1,0 +1,98 @@
+{
+  "counts": {
+    "train": {
+      "NORMAL": 1341,
+      "PNEUMONIA": 3875
+    },
+    "val": {
+      "NORMAL": 8,
+      "PNEUMONIA": 8
+    },
+    "test": {
+      "NORMAL": 234,
+      "PNEUMONIA": 390
+    }
+  },
+  "counts_after": {
+    "train": {
+      "NORMAL": 1108,
+      "PNEUMONIA": 2991
+    },
+    "val": {
+      "NORMAL": 238,
+      "PNEUMONIA": 641
+    },
+    "test": {
+      "NORMAL": 237,
+      "PNEUMONIA": 641
+    }
+  },
+  "size_summary": {
+    "NORMAL": {
+      "count": 1583,
+      "unique_sizes": 1563,
+      "width": {
+        "min": 912,
+        "max": 2916,
+        "median": 1654,
+        "mean": 1686.3796588755526
+      },
+      "height": {
+        "min": 496,
+        "max": 2713,
+        "median": 1323,
+        "mean": 1378.6487681617182
+      },
+      "aspect": {
+        "min": 0.8772204806687566,
+        "max": 2.106969205834684,
+        "median": 1.2348420153714774,
+        "mean": 1.2486124279918385
+      }
+    },
+    "PNEUMONIA": {
+      "count": 4273,
+      "unique_sizes": 3272,
+      "width": {
+        "min": 384,
+        "max": 2772,
+        "median": 1160,
+        "mean": 1195.0692721741166
+      },
+      "height": {
+        "min": 127,
+        "max": 2304,
+        "median": 776,
+        "mean": 819.5539433653171
+      },
+      "aspect": {
+        "min": 0.8353909465020576,
+        "max": 3.378787878787879,
+        "median": 1.489795918367347,
+        "mean": 1.5149947514865314
+      }
+    }
+  },
+  "mode_counts": {
+    "NORMAL": {
+      "L": 1583
+    },
+    "PNEUMONIA": {
+      "L": 3990,
+      "RGB": 283
+    }
+  },
+  "group_counts": {
+    "NORMAL": 1583,
+    "PNEUMONIA": 1844
+  },
+  "git_commit": "037967183f1eb97c71e9a2e9251e0aef3442dde6",
+  "python_version": "3.12.10",
+  "torch_version": "2.10.0+cpu",
+  "torchvision_version": "0.25.0+cpu",
+  "cuda_version": null,
+  "gpu": null,
+  "deterministic": false,
+  "in_colab": false,
+  "platform": "Windows 11"
+}

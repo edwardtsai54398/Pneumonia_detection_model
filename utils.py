@@ -10,7 +10,16 @@ import numpy as np
 import torch
 
 from constant import DEFAULT_MODEL_NAME
-from engine.visualize import plot_cm, plot_history
+from data.eda import mode_counts, size_summary
+from engine.visualize import (
+    plot_aspect_hist,
+    plot_class_distribution,
+    plot_cm,
+    plot_history,
+    plot_sample_grid,
+    plot_size_scatter,
+    plot_transform_comparison,
+)
 
 
 def set_seed(seed):
@@ -174,3 +183,91 @@ def save_results(
     print(f"Results saved to {out_dir}")
     if weights_dir != out_dir:
         print(f"Weights saved to {weights_dir}")
+
+
+def save_eda_results(
+    out_dir,
+    counts,
+    counts_after,
+    survey,
+    group_stats=None,
+    run_info=None,
+    img_size=224,
+    n_samples_per_class=4,
+    seed=0,
+    sample_paths=None,
+):
+    """把 EDA 的統計與圖一次存進 out_dir。
+
+    與 save_results 的分工：那一支存的是「某一次訓練」的產物，所以目錄帶時間
+    戳；這一支存的是「資料集本身」的分析，與 run 無關，重跑就覆蓋同一份。
+
+    參數裡的 counts / counts_after / survey 直接吃 count_images()、
+    split_counts()、survey_images() 的回傳值，不需要先整理。
+    group_stats 是 group_counts() 的回傳值，沒開分組切分就留 None。
+
+    sample_paths 是前後對照圖要用的影像。呼叫端若已經在畫面上顯示過一張對照
+    圖，就把同一份清單傳進來——否則這裡會自己挑，存檔的圖跟剛剛看到的那張不
+    是同幾張，報告引用時會對不上。留 None 時每類取第一張（排序後固定，不隨機）。
+
+    沒有回傳值。寫出的檔案：
+      eda_summary.json              所有數字，含 size_summary / mode_counts
+      original_split_distribution.png
+      regrouped_split_distribution.png
+      color_mode_distribution.png
+      image_size_scatter.png
+      aspect_ratio_hist.png
+      sample_grid.png
+      transform_comparison.png
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    sizes = size_summary(survey)
+    modes = mode_counts(survey)
+
+    summary = {
+        "counts": counts,
+        "counts_after": counts_after,
+        "size_summary": sizes,
+        "mode_counts": modes,
+    }
+    if group_stats is not None:
+        summary["group_counts"] = group_stats
+    if run_info is not None:
+        summary.update(run_info)
+
+    with open(out_dir / "eda_summary.json", "w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2, default=_json_default)
+
+    if sample_paths is None:
+        # 每類取第一張做前後對照
+        sample_paths = [
+            records[0]["path"] for records in survey.values() if records
+        ]
+
+    figures = {
+        "original_split_distribution.png": plot_class_distribution(
+            counts, title="Original Kaggle Split"
+        ),
+        "regrouped_split_distribution.png": plot_class_distribution(
+            counts_after, title="Regrouped 70/15/15"
+        ),
+        "color_mode_distribution.png": plot_class_distribution(
+            modes, title="Color Mode by Class"
+        ),
+        "image_size_scatter.png": plot_size_scatter(survey),
+        "aspect_ratio_hist.png": plot_aspect_hist(survey),
+        "sample_grid.png": plot_sample_grid(
+            survey, n_per_class=n_samples_per_class, seed=seed
+        ),
+        "transform_comparison.png": plot_transform_comparison(
+            sample_paths, img_size=img_size, seed=seed
+        ),
+    }
+
+    for filename, fig in figures.items():
+        fig.savefig(out_dir / filename, dpi=150)
+        plt.close(fig)
+
+    print(f"EDA results saved to {out_dir}")
